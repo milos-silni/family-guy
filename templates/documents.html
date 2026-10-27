@@ -1,0 +1,45 @@
+{{define "content"}}
+<form class="upload" method="post" action="/documents" enctype="multipart/form-data" data-busy="Uploading…">
+  <input type="file" name="file" multiple required aria-label="Choose documents"
+         accept=".pdf,.doc,.docx,.odt,.rtf,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+  <button type="submit" class="primary">Upload</button>
+  <p class="hint">PDF, Word (DOC, DOCX), ODT, RTF or TXT, up to 20 MB each.</p>
+</form>
+
+<div id="list">
+{{with .Data}}
+  {{if .Items}}
+  <ul class="list">
+    {{range .Items}}
+    {{if eq .ID $.Data.EditID}}
+    <li id="doc-{{.ID}}" class="editing">
+      <form class="edit" method="post" action="/documents/{{.ID}}/rename" data-ajax>
+        <span class="with-suffix">
+          <input name="name" value="{{.Base}}" aria-label="File name" maxlength="120" autocomplete="off" enterkeyhint="done" required>
+          <span class="suffix">{{.Ext}}</span>
+        </span>
+        <button type="submit" class="primary">Save</button>
+        <a href="/documents" class="secondary" data-swap>Cancel</a>
+      </form>
+    </li>
+    {{else}}
+    <li id="doc-{{.ID}}">
+      <span class="badge" aria-hidden="true">{{.Kind}}</span>
+      <a class="text" href="/documents/{{.ID}}/download" download>
+        <span class="title">{{.Name}}</span>
+        <small>{{humanSize .Size}}{{if .AddedBy}} · {{.AddedBy}}{{end}} · {{date .CreatedAt}}</small>
+      </a>
+      <a class="icon" href="/documents?edit={{.ID}}#doc-{{.ID}}" data-swap aria-label="Rename {{.Name}}">✎</a>
+      <form method="post" action="/documents/{{.ID}}/delete" data-ajax data-confirm="Delete {{.Name}}?">
+        <button class="delete" aria-label="Delete {{.Name}}">×</button>
+      </form>
+    </li>
+    {{end}}
+    {{end}}
+  </ul>
+  {{else}}
+  <p class="empty">No documents yet. Upload one above.</p>
+  {{end}}
+{{end}}
+</div>
+{{end}}

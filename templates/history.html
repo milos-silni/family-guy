@@ -1,0 +1,39 @@
+{{define "content"}}
+<p><a href="/shopping">← Shopping list</a></p>
+
+<div id="list">
+{{range .Data}}
+  <section class="card trip">
+    <div class="trip-head">
+      <h2>{{tripDate .FinishedAt}}</h2>
+      <small>{{if .FinishedBy}}{{.FinishedBy}} · {{end}}{{len .Bought}} bought</small>
+    </div>
+    <ul class="trip-items">
+      {{range .Bought}}{{template "trip-item" .}}{{end}}
+    </ul>
+    {{if .NotFound}}
+    <p class="label warn">Not found</p>
+    <ul class="trip-items">
+      {{range .NotFound}}{{template "trip-item" .}}{{end}}
+    </ul>
+    {{end}}
+  </section>
+{{else}}
+  <p class="empty">No shopping trips yet. When you're done shopping, tap "Finish shopping" on the list.</p>
+{{end}}
+</div>
+{{end}}
+
+{{define "trip-item"}}
+<li>
+  {{if .Photo}}<a href="{{photoURL .Photo}}" class="thumb-link" data-lightbox aria-label="Photo of {{.Name}}"><img src="{{photoURL .Photo}}" alt="" class="thumb" loading="lazy"></a>{{end}}
+  <span class="text"><span class="title">{{.Name}}</span>{{if .Quantity}} <span class="tag">{{.Quantity}}</span>{{end}}</span>
+  {{if .OnList}}
+  <span class="on-list">✓ On the list</span>
+  {{else}}
+  <form method="post" action="/shopping/history/items/{{.ID}}/add" data-ajax>
+    <button class="chip again" aria-label="Add {{.Name}} to the list again">+ Add again</button>
+  </form>
+  {{end}}
+</li>
+{{end}}

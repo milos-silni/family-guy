@@ -1,0 +1,43 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2e7d5b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Family">
+  <title>{{.Title}} · Family Guy</title>
+  <link rel="icon" href="{{asset "icon.svg"}}" type="image/svg+xml">
+  <link rel="icon" href="{{asset "favicon.png"}}" type="image/png" sizes="48x48">
+  <link rel="apple-touch-icon" href="{{asset "apple-touch-icon.png"}}">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="stylesheet" href="{{asset "style.css"}}">
+  <script src="{{asset "app.js"}}" defer></script>
+</head>
+<body>
+{{if .User}}
+  <header class="topbar">
+    <h1>{{.Title}}</h1>
+    <form method="post" action="/logout"><button class="link">Log out</button></form>
+  </header>
+  <main class="app">
+    {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+    {{template "content" .}}
+  </main>
+  <nav class="tabbar">
+    <a href="/shopping"{{if eq .Tab "shopping"}} aria-current="page"{{end}}><span aria-hidden="true">🛒</span>Shopping</a>
+    <a href="/todos"{{if eq .Tab "todos"}} aria-current="page"{{end}}><span aria-hidden="true">✅</span>To-do</a>
+    <a href="/documents"{{if eq .Tab "documents"}} aria-current="page"{{end}}><span aria-hidden="true">📄</span>Docs</a>
+    <a href="/swim"{{if eq .Tab "swim"}} aria-current="page"{{end}}><span aria-hidden="true">🏊</span>Swim</a>
+    <a href="/family"{{if eq .Tab "family"}} aria-current="page"{{end}}><span aria-hidden="true">👪</span>Family</a>
+  </nav>
+{{else}}
+  <main class="auth">
+    <p class="brand">Family Guy</p>
+    {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+    {{template "content" .}}
+  </main>
+{{end}}
+</body>
+</html>{{end}}

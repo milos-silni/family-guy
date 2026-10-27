@@ -1,0 +1,25 @@
+{{define "content"}}
+{{with .Data}}
+<section class="card">
+  <h2>{{.Name}}</h2>
+  <p>Everyone in the family shares the same shopping list and to-do list.</p>
+  <p class="label">Invite code</p>
+  <p class="code">{{.InviteCode}}</p>
+  <p class="hint">Family members enter this code when they create an account, or open <code>/register?invite={{.InviteCode}}</code>.</p>
+</section>
+
+<section class="card">
+  <h2>Notifications</h2>
+  <p>Get a notification on this phone when someone taps "Notify" on the shopping list.</p>
+  <p class="hint" data-push-status>Checking this device…</p>
+  <p><button class="primary push-btn" data-push hidden>Turn on notifications</button></p>
+</section>
+
+<section class="card">
+  <h2>Members</h2>
+  <ul class="members">
+    {{range .Members}}<li><strong>{{.Name}}{{if .Notify}} <span title="Notifications on">🔔</span>{{end}}</strong><small>{{.Email}}</small></li>{{end}}
+  </ul>
+</section>
+{{end}}
+{{end}}

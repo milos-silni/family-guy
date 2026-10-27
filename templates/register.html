@@ -1,0 +1,27 @@
+{{define "content"}}
+<h1>Create account</h1>
+<form method="post" action="/register" class="stack">
+  <label>Your name
+    <input type="text" name="name" value="{{index .Data "name"}}" autocomplete="given-name" maxlength="50" required>
+  </label>
+  <label>Email
+    <input type="email" name="email" value="{{index .Data "email"}}" autocomplete="email" inputmode="email" autocapitalize="off" required>
+  </label>
+  <label>Password <small>(at least 8 characters)</small>
+    <input type="password" name="password" autocomplete="new-password" minlength="8" maxlength="72" required>
+  </label>
+  {{if index .Data "first"}}
+  <label>Family invite code <small>(optional)</small>
+    <input type="text" name="invite" value="{{index .Data "invite"}}" autocomplete="off" autocapitalize="characters" maxlength="8">
+  </label>
+  <p class="hint">You're the first user: leave this empty to create your family. Everyone after you will need your family's invite code.</p>
+  {{else}}
+  <label>Family invite code
+    <input type="text" name="invite" value="{{index .Data "invite"}}" autocomplete="off" autocapitalize="characters" maxlength="8" required>
+  </label>
+  <p class="hint">Ask a family member for the code. They'll find it on the Family tab.</p>
+  {{end}}
+  <button type="submit" class="primary">Create account</button>
+</form>
+<p class="muted">Already have an account? <a href="/login">Log in</a></p>
+{{end}}

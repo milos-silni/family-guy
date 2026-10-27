@@ -1,0 +1,109 @@
+{{define "content"}}
+<form class="add" method="post" action="/shopping" data-ajax>
+  <input name="name" placeholder="Add item…" aria-label="Item" maxlength="100" autocomplete="off" enterkeyhint="done" required>
+  <input name="quantity" placeholder="Qty" aria-label="Quantity" maxlength="20" autocomplete="off" class="qty">
+  <button type="submit" aria-label="Add item">+</button>
+</form>
+
+<div id="list">
+{{with .Data}}
+  {{if .Items}}
+  <p class="counter">
+    {{with .OpenCount}}<strong>{{.}}</strong> {{if eq . 1}}item{{else}}items{{end}} to buy{{else}}{{if $.Data.NotFoundCount}}Nothing else to buy{{else}}Everything bought 🎉{{end}}{{end}}
+    {{with .NotFoundCount}} · <span class="warn">{{.}} not found</span>{{end}}
+  </p>
+  <ul class="list">
+    {{range .Items}}
+    {{if eq .ID $.Data.EditID}}
+    <li id="item-{{.ID}}" class="editing">
+      <form class="edit" method="post" action="/shopping/{{.ID}}/edit" enctype="multipart/form-data" data-ajax>
+        <input name="name" value="{{.Name}}" aria-label="Item" maxlength="100" autocomplete="off" enterkeyhint="done" required>
+        <div class="photo-field">
+          {{if .Photo}}<img src="{{photoURL .Photo}}" alt="" class="thumb" data-photo-preview>{{else}}<img alt="" class="thumb" data-photo-preview hidden>{{end}}
+          <label class="secondary photo-pick"><span aria-hidden="true">📷</span><span data-photo-label>{{if .Photo}}Change photo{{else}}Add photo{{end}}</span>
+            <input type="file" name="photo" accept="image/*" data-resize hidden>
+          </label>
+          {{if .Photo}}<label class="remove-photo"><input type="checkbox" name="remove_photo" value="1"> Remove photo</label>{{end}}
+        </div>
+        <input name="quantity" value="{{.Quantity}}" placeholder="Qty" aria-label="Quantity" maxlength="20" autocomplete="off" class="qty">
+        <button type="submit" class="primary">Save</button>
+        <a href="/shopping" class="secondary" data-swap>Cancel</a>
+      </form>
+    </li>
+    {{else}}
+    <li id="item-{{.ID}}"{{if .Done}} class="done"{{else if .NotFound}} class="not-found"{{end}}>
+      <form method="post" action="/shopping/{{.ID}}/toggle" data-ajax>
+        <button class="check" aria-label="{{if .Done}}Mark {{.Name}} as not bought{{else}}Mark {{.Name}} as bought{{end}}"></button>
+      </form>
+      {{if .Photo}}<a href="{{photoURL .Photo}}" class="thumb-link" data-lightbox aria-label="Photo of {{.Name}}"><img src="{{photoURL .Photo}}" alt="" class="thumb" loading="lazy"></a>{{end}}
+      <a class="text" href="/shopping?edit={{.ID}}#item-{{.ID}}" data-swap>
+        <span class="title">{{.Name}}</span>
+        {{if .Quantity}}<span class="tag">{{.Quantity}}</span>{{end}}
+        {{if .NotFound}}<span class="tag warn-tag">Not found</span>{{end}}
+        {{if .AddedBy}}<small>{{.AddedBy}}</small>{{end}}
+      </a>
+      <a class="icon" href="/shopping?edit={{.ID}}#item-{{.ID}}" data-swap aria-label="Edit {{.Name}}">✎</a>
+      {{if not .Done}}
+      <form method="post" action="/shopping/{{.ID}}/not-found" data-ajax>
+        <button class="icon not-found-btn" aria-pressed="{{if .NotFound}}true{{else}}false{{end}}"
+                aria-label="{{if .NotFound}}Look for {{.Name}} again{{else}}Couldn't find {{.Name}}{{end}}"
+                title="{{if .NotFound}}Look for it again{{else}}Couldn't find it{{end}}">⊘</button>
+      </form>
+      {{else}}<span class="icon" aria-hidden="true"></span>{{end}}
+      <form method="post" action="/shopping/{{.ID}}/delete" data-ajax>
+        <button class="delete" aria-label="Delete {{.Name}}">×</button>
+      </form>
+    </li>
+    {{end}}
+    {{end}}
+  </ul>
+  {{if .Notice}}<p class="notice{{if .NoticeFailed}} error{{end}}" role="status">{{.Notice}}</p>{{end}}
+  {{if and .OpenCount .NotifyTargets}}
+  <div class="notify">
+    {{range .NotifyTargets}}
+    <form method="post" action="/push/notify/{{.ID}}" data-ajax>
+      <button class="secondary notify-btn">🔔 Notify {{.Name}}</button>
+    </form>
+    {{end}}
+  </div>
+  {{end}}
+  {{if .DoneCount}}
+  <form method="post" action="/shopping/finish" data-ajax class="center"
+        data-confirm="Finish shopping? {{.DoneCount}} bought {{if eq .DoneCount 1}}item goes{{else}}items go{{end}} to the shopping history.">
+    <button class="primary finish-btn">✓ Finish shopping ({{.DoneCount}} bought)</button>
+  </form>
+  {{end}}
+  {{else}}
+  <p class="empty">The list is empty. Add something above.</p>
+  {{end}}
+  {{with .Finished}}<p class="notice" role="status">Shopping finished 🎉 {{.}} {{if eq . 1}}item{{else}}items{{end}} saved to <a href="/shopping/history">history</a>.</p>{{end}}
+
+  <section class="favorites">
+    <div class="section-head">
+      <h2>Often bought</h2>
+      <a href="/shopping/favorites">Edit</a>
+    </div>
+    {{if .Favorites}}
+    <div class="chips">
+      {{range .Favorites}}
+      <form method="post" action="/shopping/favorites/{{.ID}}/add" data-ajax>
+        <button class="chip" aria-label="Add {{.Name}} to the list">+ {{.Name}}{{if .Quantity}} <span class="tag">{{.Quantity}}</span>{{end}}</button>
+      </form>
+      {{end}}
+    </div>
+    {{if gt (len .Favorites) 1}}
+    <form method="post" action="/shopping/favorites/add-all" data-ajax class="center">
+      <button class="secondary">Add all {{len .Favorites}} to the list</button>
+    </form>
+    {{end}}
+    {{else if .FavoritesTotal}}
+    <p class="hint">All of them are on the list.</p>
+    {{else}}
+    <p class="hint">Save things you buy often, then add them with one tap. <a href="/shopping/favorites">Set them up</a></p>
+    {{end}}
+  </section>
+
+  <p class="center"><a href="/shopping/history" class="history-link">🕘 Shopping history</a></p>
+{{end}}
+</div>
+{{end}}

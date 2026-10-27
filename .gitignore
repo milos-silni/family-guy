@@ -1,0 +1,6 @@
+/family-guy
+/family-guy-linux
+*.db
+*.db-shm
+*.db-wal
+/uploads/

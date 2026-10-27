@@ -1,0 +1,36 @@
+{{define "content"}}
+<div id="list">
+{{with .Data}}
+  <div class="progress-head">
+    <p class="counter">
+      {{if eq .DoneCount .Total}}All {{.Total}} classes done 🎉{{else}}<strong>{{.DoneCount}}</strong> of {{.Total}} classes done{{end}}
+    </p>
+    <span class="counter">{{.Percent}}%</span>
+  </div>
+  <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="{{.Total}}" aria-valuenow="{{.DoneCount}}" aria-label="Classes done">
+    <span style="width: {{.Percent}}%"></span>
+  </div>
+
+  <div class="classes">
+    {{range .Classes}}
+    <form method="post" action="/swim/{{.Number}}/toggle" data-ajax>
+      <button class="class{{if .Done}} done{{end}}{{if .Next}} next{{end}}"
+              aria-pressed="{{if .Done}}true{{else}}false{{end}}"
+              aria-label="Class {{.Number}}{{if .Done}}, done {{date .DoneAt}}{{end}}">
+        <span class="class-label">Class</span>
+        <span class="class-number">{{.Number}}</span>
+        {{if .Done}}<small><span>✓ {{shortDate .DoneAt}}</span>{{if .DoneBy}}<span>{{.DoneBy}}</span>{{end}}</small>
+        {{else if .Next}}<small>Next</small>{{end}}
+      </button>
+    </form>
+    {{end}}
+  </div>
+
+  {{if .DoneCount}}
+  <form method="post" action="/swim/reset" data-ajax data-confirm="Start over? This clears all {{.DoneCount}} done classes." class="center">
+    <button class="secondary">Start over</button>
+  </form>
+  {{end}}
+{{end}}
+</div>
+{{end}}

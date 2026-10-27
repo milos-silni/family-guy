@@ -1,0 +1,34 @@
+{{define "content"}}
+<p><a href="/shopping">← Shopping list</a></p>
+
+<form method="post" action="/shopping/favorites" class="stack">
+  <label>Add items you buy often
+    <textarea name="items" rows="6" placeholder="One item per line, e.g.&#10;Mila jogurt 4 kom&#10;bio banane"></textarea>
+  </label>
+  <p class="hint">You can paste a whole list. A number at the end, like "4 kom" or "2L", becomes the quantity.</p>
+  <button type="submit" class="primary">Save</button>
+</form>
+
+<div id="list">
+{{with .Data}}
+  {{if .Items}}
+  <h2 class="list-heading">Saved ({{len .Items}})</h2>
+  <ul class="list">
+    {{range .Items}}
+    <li>
+      <div class="text">
+        <span class="title">{{.Name}}</span>
+        {{if .Quantity}}<span class="tag">{{.Quantity}}</span>{{end}}
+      </div>
+      <form method="post" action="/shopping/favorites/{{.ID}}/delete" data-ajax>
+        <button class="delete" aria-label="Remove {{.Name}}">×</button>
+      </form>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}
+  <p class="empty">Nothing saved yet.</p>
+  {{end}}
+{{end}}
+</div>
+{{end}}

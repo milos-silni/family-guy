@@ -1,0 +1,11 @@
+{{define "content"}}
+<h1>Log in</h1>
+<form method="post" action="/login" class="stack">
+  <label>Email
+    <input type="email" name="email" value="{{index .Data "email"}}" autocomplete="email" inputmode="email" autocapitalize="off" required>
+  </label>
+  <label>Password
+    <input type="password" name="password" autocomplete="current-password" required>
+  </label>
+  <button type="submit" class="primary">Log in</button>
+</form>{{end}}
