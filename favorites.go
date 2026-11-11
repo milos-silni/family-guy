@@ -103,16 +103,24 @@ func (a *App) favoritesPage(w http.ResponseWriter, r *http.Request, u *User) {
 }
 
 func (a *App) addFavorites(w http.ResponseWriter, r *http.Request, u *User) {
-	for _, f := range parseItemLines(r.FormValue("items")) {
+	if err := a.saveFavorites(u.FamilyID, parseItemLines(r.FormValue("items"))); err != nil {
+		a.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/shopping/favorites", http.StatusSeeOther)
+}
+
+// saveFavorites adds favorites; one with the same name (any case) gets the new quantity.
+func (a *App) saveFavorites(familyID int64, favs []Favorite) error {
+	for _, f := range favs {
 		if _, err := a.db.Exec(`
 			INSERT INTO favorites (family_id, name, quantity) VALUES (?, ?, ?)
 			ON CONFLICT (family_id, name) DO UPDATE SET quantity = excluded.quantity`,
-			u.FamilyID, f.Name, f.Quantity); err != nil {
-			a.serverError(w, err)
-			return
+			familyID, f.Name, f.Quantity); err != nil {
+			return err
 		}
 	}
-	http.Redirect(w, r, "/shopping/favorites", http.StatusSeeOther)
+	return nil
 }
 
 func (a *App) deleteFavorite(w http.ResponseWriter, r *http.Request, u *User) {

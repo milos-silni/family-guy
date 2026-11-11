@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type ShoppingItem struct {
@@ -17,6 +18,7 @@ type ShoppingItem struct {
 	NotFound bool // looked for it but couldn't find it
 	Photo    string
 	AddedBy  string
+	Created  time.Time
 }
 
 type ShoppingData struct {
@@ -41,6 +43,7 @@ type Todo struct {
 	Title   string
 	Done    bool
 	AddedBy string
+	Created time.Time
 }
 
 type ListData[T any] struct {
@@ -55,37 +58,22 @@ func (d ListData[T]) OpenCount() int {
 }
 
 func (a *App) shoppingPage(w http.ResponseWriter, r *http.Request, u *User) {
-	rows, err := a.db.Query(`
-		SELECT i.id, i.name, i.quantity, i.done, i.not_found, i.photo, COALESCE(u.name, '')
-		FROM shopping_items i LEFT JOIN users u ON u.id = i.added_by
-		WHERE i.family_id = ?
-		ORDER BY i.done, i.not_found, i.id`, u.FamilyID)
+	items, err := a.loadShoppingItems(u.FamilyID, 0)
 	if err != nil {
 		a.serverError(w, err)
 		return
 	}
-	defer rows.Close()
-
 	var data ShoppingData
 	data.EditID, _ = strconv.ParseInt(r.URL.Query().Get("edit"), 10, 64)
-	for rows.Next() {
-		var it ShoppingItem
-		if err := rows.Scan(&it.ID, &it.Name, &it.Quantity, &it.Done, &it.NotFound, &it.Photo, &it.AddedBy); err != nil {
-			a.serverError(w, err)
-			return
-		}
+	for _, it := range items {
 		switch {
 		case it.Done:
 			data.DoneCount++
 		case it.NotFound:
 			data.NotFoundCount++
 		}
-		data.Items = append(data.Items, it)
 	}
-	if err := rows.Err(); err != nil {
-		a.serverError(w, err)
-		return
-	}
+	data.Items = items
 	if data.Favorites, data.FavoritesTotal, err = a.loadFavorites(u.FamilyID); err != nil {
 		a.serverError(w, err)
 		return
@@ -110,6 +98,30 @@ func (a *App) shoppingPage(w http.ResponseWriter, r *http.Request, u *User) {
 		}
 	}
 	a.render(w, http.StatusOK, "shopping", Page{Title: "Shopping list", User: u, Tab: "shopping", Data: data})
+}
+
+// loadShoppingItems returns the family's shopping list, or only item id when id != 0.
+func (a *App) loadShoppingItems(familyID, id int64) ([]ShoppingItem, error) {
+	rows, err := a.db.Query(`
+		SELECT i.id, i.name, i.quantity, i.done, i.not_found, i.photo, COALESCE(u.name, ''), i.created_at
+		FROM shopping_items i LEFT JOIN users u ON u.id = i.added_by
+		WHERE i.family_id = ? AND (? = 0 OR i.id = ?)
+		ORDER BY i.done, i.not_found, i.id`, familyID, id, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ShoppingItem
+	for rows.Next() {
+		var it ShoppingItem
+		var created int64
+		if err := rows.Scan(&it.ID, &it.Name, &it.Quantity, &it.Done, &it.NotFound, &it.Photo, &it.AddedBy, &created); err != nil {
+			return nil, err
+		}
+		it.Created = time.Unix(created, 0)
+		items = append(items, it)
+	}
+	return items, rows.Err()
 }
 
 func (a *App) addShoppingItem(w http.ResponseWriter, r *http.Request, u *User) {
@@ -218,34 +230,42 @@ func (a *App) updateShoppingItem(w http.ResponseWriter, r *http.Request, u *User
 }
 
 func (a *App) todosPage(w http.ResponseWriter, r *http.Request, u *User) {
-	rows, err := a.db.Query(`
-		SELECT t.id, t.title, t.done, COALESCE(u.name, '')
-		FROM todos t LEFT JOIN users u ON u.id = t.added_by
-		WHERE t.family_id = ?
-		ORDER BY t.done, t.id`, u.FamilyID)
+	todos, err := a.loadTodos(u.FamilyID, 0)
 	if err != nil {
 		a.serverError(w, err)
 		return
 	}
-	defer rows.Close()
-
-	var data ListData[Todo]
-	for rows.Next() {
-		var t Todo
-		if err := rows.Scan(&t.ID, &t.Title, &t.Done, &t.AddedBy); err != nil {
-			a.serverError(w, err)
-			return
-		}
+	data := ListData[Todo]{Items: todos}
+	for _, t := range todos {
 		if t.Done {
 			data.DoneCount++
 		}
-		data.Items = append(data.Items, t)
-	}
-	if err := rows.Err(); err != nil {
-		a.serverError(w, err)
-		return
 	}
 	a.render(w, http.StatusOK, "todos", Page{Title: "To-do", User: u, Tab: "todos", Data: data})
+}
+
+// loadTodos returns the family's to-dos, or only to-do id when id != 0.
+func (a *App) loadTodos(familyID, id int64) ([]Todo, error) {
+	rows, err := a.db.Query(`
+		SELECT t.id, t.title, t.done, COALESCE(u.name, ''), t.created_at
+		FROM todos t LEFT JOIN users u ON u.id = t.added_by
+		WHERE t.family_id = ? AND (? = 0 OR t.id = ?)
+		ORDER BY t.done, t.id`, familyID, id, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var todos []Todo
+	for rows.Next() {
+		var t Todo
+		var created int64
+		if err := rows.Scan(&t.ID, &t.Title, &t.Done, &t.AddedBy, &created); err != nil {
+			return nil, err
+		}
+		t.Created = time.Unix(created, 0)
+		todos = append(todos, t)
+	}
+	return todos, rows.Err()
 }
 
 func (a *App) addTodo(w http.ResponseWriter, r *http.Request, u *User) {
@@ -303,39 +323,48 @@ func (a *App) clearDone(table, back string) func(http.ResponseWriter, *http.Requ
 }
 
 type Member struct {
+	ID     int64
 	Name   string
 	Email  string
 	Notify bool // has notifications on at least one device
 }
 
+type FamilyData struct {
+	Name       string
+	InviteCode string
+	Members    []Member
+}
+
 func (a *App) familyPage(w http.ResponseWriter, r *http.Request, u *User) {
-	var data struct {
-		Name       string
-		InviteCode string
-		Members    []Member
-	}
-	if err := a.db.QueryRow(`SELECT name, invite_code FROM families WHERE id = ?`, u.FamilyID).
-		Scan(&data.Name, &data.InviteCode); err != nil {
-		a.serverError(w, err)
-		return
-	}
-	rows, err := a.db.Query(`
-		SELECT name, email, EXISTS (SELECT 1 FROM push_subscriptions p WHERE p.user_id = users.id)
-		FROM users WHERE family_id = ? ORDER BY id`, u.FamilyID)
+	data, err := a.loadFamily(u.FamilyID)
 	if err != nil {
 		a.serverError(w, err)
 		return
 	}
+	a.render(w, http.StatusOK, "family", Page{Title: "Family", User: u, Tab: "family", Data: data})
+}
+
+func (a *App) loadFamily(familyID int64) (FamilyData, error) {
+	var data FamilyData
+	if err := a.db.QueryRow(`SELECT name, invite_code FROM families WHERE id = ?`, familyID).
+		Scan(&data.Name, &data.InviteCode); err != nil {
+		return data, err
+	}
+	rows, err := a.db.Query(`
+		SELECT id, name, email, `+hasPushSQL+`
+		FROM users u WHERE family_id = ? ORDER BY id`, familyID)
+	if err != nil {
+		return data, err
+	}
 	defer rows.Close()
 	for rows.Next() {
 		var m Member
-		if err := rows.Scan(&m.Name, &m.Email, &m.Notify); err != nil {
-			a.serverError(w, err)
-			return
+		if err := rows.Scan(&m.ID, &m.Name, &m.Email, &m.Notify); err != nil {
+			return data, err
 		}
 		data.Members = append(data.Members, m)
 	}
-	a.render(w, http.StatusOK, "family", Page{Title: "Family", User: u, Tab: "family", Data: data})
+	return data, rows.Err()
 }
 
 func limit(s string, n int) string {

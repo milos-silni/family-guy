@@ -104,6 +104,10 @@ func (a *App) pushUnsubscribe(w http.ResponseWriter, r *http.Request, u *User) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// hasPushSQL is true when user u has notifications on in a browser or the Android app.
+const hasPushSQL = `(EXISTS (SELECT 1 FROM push_subscriptions p WHERE p.user_id = u.id)
+	OR EXISTS (SELECT 1 FROM fcm_tokens f WHERE f.user_id = u.id))`
+
 type NotifyTarget struct {
 	ID   int64
 	Name string
@@ -113,7 +117,7 @@ type NotifyTarget struct {
 func (a *App) notifyTargets(u *User) ([]NotifyTarget, error) {
 	rows, err := a.db.Query(`
 		SELECT u.id, u.name FROM users u
-		WHERE u.family_id = ? AND u.id != ? AND EXISTS (SELECT 1 FROM push_subscriptions p WHERE p.user_id = u.id)
+		WHERE u.family_id = ? AND u.id != ? AND `+hasPushSQL+`
 		ORDER BY u.id`, u.FamilyID, u.ID)
 	if err != nil {
 		return nil, err
@@ -137,38 +141,50 @@ func (a *App) notifyShopping(w http.ResponseWriter, r *http.Request, u *User) {
 		http.NotFound(w, r)
 		return
 	}
-	var targetFamily int64
-	err = a.db.QueryRow(`SELECT family_id FROM users WHERE id = ?`, targetID).Scan(&targetFamily)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && targetFamily != u.FamilyID) {
+	sent, err := a.sendShoppingList(u, targetID, "https://"+r.Host)
+	if errors.Is(err, errNotFound) {
 		http.NotFound(w, r)
 		return
 	} else if err != nil {
 		a.serverError(w, err)
 		return
 	}
-
-	names, err := a.openShoppingNames(u.FamilyID)
-	if err != nil {
-		a.serverError(w, err)
-		return
-	}
-	payload, _ := json.Marshal(map[string]string{
-		"title": shoppingTitle(u.Name, len(names)),
-		"body":  summarize(names, 140),
-		"url":   "/shopping",
-	})
-
-	sent, err := a.sendPush(targetID, payload, "https://"+r.Host)
-	if err != nil {
-		a.serverError(w, err)
-		return
-	}
 	http.Redirect(w, r, fmt.Sprintf("/shopping?notified=%d&sent=%d", targetID, sent), http.StatusSeeOther)
 }
 
-// sendPush delivers payload to every device of a user and returns how many
-// accepted it. Devices the push service says are gone are forgotten.
-func (a *App) sendPush(userID int64, payload []byte, subscriber string) (int, error) {
+var errNotFound = errors.New("not found")
+
+// sendShoppingList pushes the open shopping list to a member of u's family and
+// returns how many devices accepted it. errNotFound: no such member.
+func (a *App) sendShoppingList(u *User, targetID int64, subscriber string) (int, error) {
+	var targetFamily int64
+	err := a.db.QueryRow(`SELECT family_id FROM users WHERE id = ?`, targetID).Scan(&targetFamily)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && targetFamily != u.FamilyID) {
+		return 0, errNotFound
+	} else if err != nil {
+		return 0, err
+	}
+	names, err := a.openShoppingNames(u.FamilyID)
+	if err != nil {
+		return 0, err
+	}
+	return a.sendPush(targetID, pushMessage{
+		Title: shoppingTitle(u.Name, len(names)),
+		Body:  summarize(names, 140),
+		URL:   "/shopping",
+	}, subscriber)
+}
+
+type pushMessage struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+	URL   string `json:"url"`
+}
+
+// sendPush delivers msg to every device of a user (browsers and Android app)
+// and returns how many accepted it. Devices the push service says are gone are forgotten.
+func (a *App) sendPush(userID int64, msg pushMessage, subscriber string) (int, error) {
+	payload, _ := json.Marshal(msg)
 	rows, err := a.db.Query(`SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?`, userID)
 	if err != nil {
 		return 0, err
@@ -219,7 +235,9 @@ func (a *App) sendPush(userID int64, payload []byte, subscriber string) (int, er
 			sent++
 		}
 	}
-	return sent, nil
+
+	n, err := a.sendFCM(userID, msg)
+	return sent + n, err
 }
 
 func (a *App) openShoppingNames(familyID int64) ([]string, error) {

@@ -18,10 +18,15 @@ Options (flag or environment variable):
 | `-db`             | `DB_PATH`        | `family.db` |
 | `-uploads`        | `UPLOADS_DIR`    | `uploads`   |
 | `-secure-cookies` | `SECURE_COOKIES=1` | off — turn on when served over HTTPS |
+| `-fcm-credentials` | `FCM_CREDENTIALS` | none — Firebase service account JSON key, for Android app notifications |
 
 ## How families work
 
 Registration is invite-only. Only the very first account on an empty database can sign up without a code; it creates the family. The **Family** tab shows the invite code, and everyone else must enter it when they register, or open `/register?invite=CODE`. Everyone in a family sees and edits the same lists and documents.
+
+## Android app API
+
+A JSON API for the Android app runs under `/api/v1` with bearer-token login. See [API.md](API.md) for every endpoint.
 
 ## Documents
 
@@ -38,6 +43,8 @@ The **Docs** tab takes PDF, Word (DOC, DOCX), ODT, RTF and TXT files up to 20 MB
 - `favorites.go` – "Often bought" items for the shopping list
 - `history.go` – "Finish shopping" and the shopping history
 - `push.go` – push notifications ("Notify …" on the shopping list)
+- `fcm.go` – push notifications to the Android app through Firebase Cloud Messaging
+- `api.go`, `api_shopping.go`, `api_other.go` – JSON API for the Android app (see `API.md`)
 - `db.go` – SQLite schema (pure Go driver, no cgo)
 - `templates/`, `static/` – HTML, CSS and a small optional JS file, embedded into the binary
 

@@ -20,6 +20,7 @@ func main() {
 	dbPath := flag.String("db", envOr("DB_PATH", "family.db"), "SQLite database file")
 	uploads := flag.String("uploads", envOr("UPLOADS_DIR", "uploads"), "directory for uploaded documents")
 	secure := flag.Bool("secure-cookies", os.Getenv("SECURE_COOKIES") == "1", "mark cookies Secure (enable when served over HTTPS)")
+	fcmKey := flag.String("fcm-credentials", os.Getenv("FCM_CREDENTIALS"), "Firebase service account JSON key, for Android app push notifications")
 	flag.Parse()
 
 	db, err := openDB(*dbPath)
@@ -35,6 +36,11 @@ func main() {
 	app, err := newApp(db, *uploads, *secure)
 	if err != nil {
 		log.Fatalf("init app: %v", err)
+	}
+	if *fcmKey != "" {
+		if app.fcm, err = loadFCM(*fcmKey); err != nil {
+			log.Fatalf("load FCM credentials: %v", err)
+		}
 	}
 
 	srv := &http.Server{

@@ -25,6 +25,15 @@ func (d SwimData) Total() int   { return len(d.Classes) }
 func (d SwimData) Percent() int { return d.DoneCount * 100 / len(d.Classes) }
 
 func (a *App) swimPage(w http.ResponseWriter, r *http.Request, u *User) {
+	data, err := a.loadSwim(u.FamilyID)
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	a.render(w, http.StatusOK, "swim", Page{Title: "Kinder Schwimmschule", User: u, Tab: "swim", Data: data})
+}
+
+func (a *App) loadSwim(familyID int64) (SwimData, error) {
 	data := SwimData{Classes: make([]SwimClass, swimClassCount)}
 	for i := range data.Classes {
 		data.Classes[i].Number = i + 1
@@ -33,10 +42,9 @@ func (a *App) swimPage(w http.ResponseWriter, r *http.Request, u *User) {
 	rows, err := a.db.Query(`
 		SELECT s.number, s.done_at, COALESCE(u.name, '')
 		FROM swim_classes s LEFT JOIN users u ON u.id = s.done_by
-		WHERE s.family_id = ?`, u.FamilyID)
+		WHERE s.family_id = ?`, familyID)
 	if err != nil {
-		a.serverError(w, err)
-		return
+		return data, err
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -44,8 +52,7 @@ func (a *App) swimPage(w http.ResponseWriter, r *http.Request, u *User) {
 		var doneAt int64
 		var by string
 		if err := rows.Scan(&n, &doneAt, &by); err != nil {
-			a.serverError(w, err)
-			return
+			return data, err
 		}
 		if n < 1 || n > swimClassCount {
 			continue
@@ -55,8 +62,7 @@ func (a *App) swimPage(w http.ResponseWriter, r *http.Request, u *User) {
 		data.DoneCount++
 	}
 	if err := rows.Err(); err != nil {
-		a.serverError(w, err)
-		return
+		return data, err
 	}
 	for i := range data.Classes {
 		if !data.Classes[i].Done {
@@ -64,7 +70,7 @@ func (a *App) swimPage(w http.ResponseWriter, r *http.Request, u *User) {
 			break
 		}
 	}
-	a.render(w, http.StatusOK, "swim", Page{Title: "Kinder Schwimmschule", User: u, Tab: "swim", Data: data})
+	return data, nil
 }
 
 func (a *App) toggleSwimClass(w http.ResponseWriter, r *http.Request, u *User) {

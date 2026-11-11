@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -30,15 +31,8 @@ type TripItem struct {
 const historyTrips = 50 // how many recent trips the history page shows
 
 func (a *App) finishShopping(w http.ResponseWriter, r *http.Request, u *User) {
-	tx, err := a.db.Begin()
+	bought, err := a.finishTrip(u)
 	if err != nil {
-		a.serverError(w, err)
-		return
-	}
-	defer tx.Rollback()
-
-	var bought int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM shopping_items WHERE family_id = ? AND done = 1`, u.FamilyID).Scan(&bought); err != nil {
 		a.serverError(w, err)
 		return
 	}
@@ -46,11 +40,28 @@ func (a *App) finishShopping(w http.ResponseWriter, r *http.Request, u *User) {
 		http.Redirect(w, r, "/shopping", http.StatusSeeOther)
 		return
 	}
+	http.Redirect(w, r, fmt.Sprintf("/shopping?finished=%d", bought), http.StatusSeeOther)
+}
+
+// finishTrip saves bought and not-found items as a trip and returns how many
+// were bought. Nothing happens when nothing is bought.
+func (a *App) finishTrip(u *User) (bought int, err error) {
+	tx, err := a.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM shopping_items WHERE family_id = ? AND done = 1`, u.FamilyID).Scan(&bought); err != nil {
+		return 0, err
+	}
+	if bought == 0 {
+		return 0, nil
+	}
 
 	res, err := tx.Exec(`INSERT INTO shopping_trips (family_id, finished_by) VALUES (?, ?)`, u.FamilyID, u.ID)
 	if err != nil {
-		a.serverError(w, err)
-		return
+		return 0, err
 	}
 	tripID, _ := res.LastInsertId()
 
@@ -68,14 +79,9 @@ func (a *App) finishShopping(w http.ResponseWriter, r *http.Request, u *User) {
 		_, err = tx.Exec(`UPDATE shopping_items SET not_found = 0 WHERE family_id = ? AND not_found = 1`, u.FamilyID)
 	}
 	if err != nil {
-		a.serverError(w, err)
-		return
+		return 0, err
 	}
-	if err := tx.Commit(); err != nil {
-		a.serverError(w, err)
-		return
-	}
-	http.Redirect(w, r, fmt.Sprintf("/shopping?finished=%d", bought), http.StatusSeeOther)
+	return bought, tx.Commit()
 }
 
 func (a *App) historyPage(w http.ResponseWriter, r *http.Request, u *User) {
@@ -130,24 +136,36 @@ func (a *App) addTripItemToList(w http.ResponseWriter, r *http.Request, u *User)
 		http.NotFound(w, r)
 		return
 	}
-	var name, qty, photo string
-	err = a.db.QueryRow(`
-		SELECT i.name, i.quantity, i.photo FROM shopping_trip_items i JOIN shopping_trips t ON t.id = i.trip_id
-		WHERE i.id = ? AND t.family_id = ?`, id, u.FamilyID).Scan(&name, &qty, &photo)
-	if err == sql.ErrNoRows {
+	if _, err := a.copyTripItemToList(u, id); errors.Is(err, errNotFound) {
 		http.NotFound(w, r)
 		return
 	} else if err != nil {
 		a.serverError(w, err)
 		return
 	}
-	if _, err := a.db.Exec(`
+	http.Redirect(w, r, "/shopping/history", http.StatusSeeOther)
+}
+
+// copyTripItemToList adds trip item id to the list unless it is already on it
+// (not bought yet). It reports whether it was added; errNotFound: no such item.
+func (a *App) copyTripItemToList(u *User, id int64) (bool, error) {
+	var name, qty, photo string
+	err := a.db.QueryRow(`
+		SELECT i.name, i.quantity, i.photo FROM shopping_trip_items i JOIN shopping_trips t ON t.id = i.trip_id
+		WHERE i.id = ? AND t.family_id = ?`, id, u.FamilyID).Scan(&name, &qty, &photo)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, errNotFound
+	} else if err != nil {
+		return false, err
+	}
+	res, err := a.db.Exec(`
 		INSERT INTO shopping_items (family_id, name, quantity, photo, added_by)
 		SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (
 			SELECT 1 FROM shopping_items WHERE family_id = ? AND done = 0 AND name = ? COLLATE NOCASE)`,
-		u.FamilyID, name, qty, photo, u.ID, u.FamilyID, name); err != nil {
-		a.serverError(w, err)
-		return
+		u.FamilyID, name, qty, photo, u.ID, u.FamilyID, name)
+	if err != nil {
+		return false, err
 	}
-	http.Redirect(w, r, "/shopping/history", http.StatusSeeOther)
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }

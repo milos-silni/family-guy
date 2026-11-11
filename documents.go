@@ -74,33 +74,36 @@ func (a *App) documentsPage(w http.ResponseWriter, r *http.Request, u *User) {
 }
 
 func (a *App) renderDocuments(w http.ResponseWriter, status int, u *User, editID int64, errMsg string) {
-	rows, err := a.db.Query(`
-		SELECT d.id, d.name, d.size, COALESCE(u.name, ''), d.created_at
-		FROM documents d LEFT JOIN users u ON u.id = d.added_by
-		WHERE d.family_id = ?
-		ORDER BY d.id DESC`, u.FamilyID)
+	docs, err := a.loadDocuments(u.FamilyID)
 	if err != nil {
 		a.serverError(w, err)
 		return
 	}
-	defer rows.Close()
+	data := DocumentsData{Items: docs, EditID: editID}
+	a.render(w, status, "documents", Page{Title: "Documents", User: u, Tab: "documents", Error: errMsg, Data: data})
+}
 
-	data := DocumentsData{EditID: editID}
+func (a *App) loadDocuments(familyID int64) ([]Document, error) {
+	rows, err := a.db.Query(`
+		SELECT d.id, d.name, d.size, COALESCE(u.name, ''), d.created_at
+		FROM documents d LEFT JOIN users u ON u.id = d.added_by
+		WHERE d.family_id = ?
+		ORDER BY d.id DESC`, familyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var docs []Document
 	for rows.Next() {
 		var d Document
 		var created int64
 		if err := rows.Scan(&d.ID, &d.Name, &d.Size, &d.AddedBy, &created); err != nil {
-			a.serverError(w, err)
-			return
+			return nil, err
 		}
 		d.CreatedAt = time.Unix(created, 0)
-		data.Items = append(data.Items, d)
+		docs = append(docs, d)
 	}
-	if err := rows.Err(); err != nil {
-		a.serverError(w, err)
-		return
-	}
-	a.render(w, status, "documents", Page{Title: "Documents", User: u, Tab: "documents", Error: errMsg, Data: data})
+	return docs, rows.Err()
 }
 
 func (a *App) uploadDocuments(w http.ResponseWriter, r *http.Request, u *User) {
@@ -128,7 +131,7 @@ func (a *App) uploadDocuments(w http.ResponseWriter, r *http.Request, u *User) {
 			part.Close()
 			continue
 		}
-		err = a.saveDocument(part, u)
+		_, err = a.saveDocument(part, u)
 		part.Close()
 		if err != nil {
 			a.uploadFailed(w, u, err)
@@ -158,18 +161,18 @@ func (a *App) uploadFailed(w http.ResponseWriter, u *User, err error) {
 }
 
 // saveDocument streams one uploaded file to disk and records it in the database.
-func (a *App) saveDocument(part *multipart.Part, u *User) error {
+func (a *App) saveDocument(part *multipart.Part, u *User) (Document, error) {
 	name := cleanFileName(part.FileName())
 	ext := strings.ToLower(filepath.Ext(name))
 	if _, ok := documentTypes[ext]; !ok {
-		return uploadError(name + ": only PDF, Word (DOC, DOCX), ODT, RTF and TXT files are allowed.")
+		return Document{}, uploadError(name + ": only PDF, Word (DOC, DOCX), ODT, RTF and TXT files are allowed.")
 	}
 
 	br := bufio.NewReader(part)
 	if magic, ok := documentMagic[ext]; ok {
 		head, _ := br.Peek(len(magic))
 		if !bytes.Equal(head, magic) {
-			return uploadError(name + " doesn't look like a real " + strings.ToUpper(ext[1:]) + " file.")
+			return Document{}, uploadError(name + " doesn't look like a real " + strings.ToUpper(ext[1:]) + " file.")
 		}
 	}
 
@@ -178,7 +181,7 @@ func (a *App) saveDocument(part *multipart.Part, u *User) error {
 	path := filepath.Join(a.uploadsDir, stored)
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return err
+		return Document{}, err
 	}
 	saved := false
 	defer func() {
@@ -190,23 +193,25 @@ func (a *App) saveDocument(part *multipart.Part, u *User) error {
 
 	n, err := io.Copy(f, io.LimitReader(br, maxDocumentSize+1))
 	if err != nil {
-		return err
+		return Document{}, err
 	}
 	if n > maxDocumentSize {
-		return uploadError(fmt.Sprintf("%s is larger than %d MB.", name, maxDocumentSize>>20))
+		return Document{}, uploadError(fmt.Sprintf("%s is larger than %d MB.", name, maxDocumentSize>>20))
 	}
 	if n == 0 {
-		return uploadError(name + " is empty.")
+		return Document{}, uploadError(name + " is empty.")
 	}
 	if err := f.Close(); err != nil {
-		return err
+		return Document{}, err
 	}
-	if _, err := a.db.Exec(`INSERT INTO documents (family_id, name, stored_name, size, added_by) VALUES (?, ?, ?, ?, ?)`,
-		u.FamilyID, name, stored, n, u.ID); err != nil {
-		return err
+	res, err := a.db.Exec(`INSERT INTO documents (family_id, name, stored_name, size, added_by) VALUES (?, ?, ?, ?, ?)`,
+		u.FamilyID, name, stored, n, u.ID)
+	if err != nil {
+		return Document{}, err
 	}
 	saved = true
-	return nil
+	id, _ := res.LastInsertId()
+	return Document{ID: id, Name: name, Size: n, AddedBy: u.Name, CreatedAt: time.Now().Truncate(time.Second)}, nil
 }
 
 func (a *App) downloadDocument(w http.ResponseWriter, r *http.Request, u *User) {
@@ -247,21 +252,28 @@ func (a *App) renameDocument(w http.ResponseWriter, r *http.Request, u *User) {
 	if !ok {
 		return
 	}
-	// The extension is kept as-is so the file still opens with the right app.
-	ext := filepath.Ext(current)
-	input := strings.TrimSpace(r.FormValue("name"))
-	if strings.HasSuffix(strings.ToLower(input), ext) {
-		input = strings.TrimSpace(input[:len(input)-len(ext)]) // user typed the extension too
-	}
-	if input != "" {
-		base := strings.TrimSuffix(cleanFileName(input+ext), ext)
+	if name := renamedDocument(current, r.FormValue("name")); name != current {
 		if _, err := a.db.Exec(`UPDATE documents SET name = ? WHERE id = ? AND family_id = ?`,
-			base+ext, r.PathValue("id"), u.FamilyID); err != nil {
+			name, r.PathValue("id"), u.FamilyID); err != nil {
 			a.serverError(w, err)
 			return
 		}
 	}
 	http.Redirect(w, r, "/documents", http.StatusSeeOther)
+}
+
+// renamedDocument returns the new file name for input, keeping the current
+// extension so the file still opens with the right app. Empty input keeps the name.
+func renamedDocument(current, input string) string {
+	ext := filepath.Ext(current)
+	input = strings.TrimSpace(input)
+	if strings.HasSuffix(strings.ToLower(input), ext) {
+		input = strings.TrimSpace(input[:len(input)-len(ext)]) // user typed the extension too
+	}
+	if input == "" {
+		return current
+	}
+	return strings.TrimSuffix(cleanFileName(input+ext), ext) + ext
 }
 
 func (a *App) deleteDocument(w http.ResponseWriter, r *http.Request, u *User) {

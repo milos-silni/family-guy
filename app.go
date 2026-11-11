@@ -15,7 +15,8 @@ type App struct {
 	secure     bool
 	pages      map[string]*template.Template
 
-	vapidPublic, vapidPrivate string // Web Push keys
+	vapidPublic, vapidPrivate string     // Web Push keys
+	fcm                       *fcmSender // Android push; nil when not configured
 }
 
 // Page is the data passed to every template.
@@ -107,6 +108,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /swim/reset", a.requireUser(a.resetSwimClasses))
 
 	mux.Handle("GET /family", a.requireUser(a.familyPage))
+
+	a.apiRoutes(mux)
 
 	// Rejects cross-site POSTs (CSRF) using Sec-Fetch-Site / Origin headers.
 	return http.NewCrossOriginProtection().Handler(logRequests(mux))

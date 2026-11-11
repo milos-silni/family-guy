@@ -40,23 +40,16 @@ func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	email := normalizeEmail(r.FormValue("email"))
-	password := r.FormValue("password")
-
-	var id int64
-	var hash []byte
-	err := a.db.QueryRow(`SELECT id, password_hash FROM users WHERE email = ?`, email).Scan(&id, &hash)
-	if errors.Is(err, sql.ErrNoRows) {
-		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
-	} else if err != nil {
-		a.serverError(w, err)
-		return
-	}
-	if err != nil || bcrypt.CompareHashAndPassword(hash, []byte(password)) != nil {
+	id, err := a.authenticate(email, r.FormValue("password"))
+	if errors.Is(err, errWrongLogin) {
 		a.render(w, http.StatusUnauthorized, "login", Page{
 			Title: "Log in",
 			Error: "Wrong email or password.",
 			Data:  map[string]string{"email": email},
 		})
+		return
+	} else if err != nil {
+		a.serverError(w, err)
 		return
 	}
 
@@ -65,6 +58,25 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/shopping", http.StatusSeeOther)
+}
+
+var errWrongLogin = errors.New("wrong email or password")
+
+// authenticate returns the id of the user with this email and password, or errWrongLogin.
+func (a *App) authenticate(email, password string) (int64, error) {
+	var id int64
+	var hash []byte
+	err := a.db.QueryRow(`SELECT id, password_hash FROM users WHERE email = ?`, normalizeEmail(email)).Scan(&id, &hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
+		return 0, errWrongLogin
+	} else if err != nil {
+		return 0, err
+	}
+	if bcrypt.CompareHashAndPassword(hash, []byte(password)) != nil {
+		return 0, errWrongLogin
+	}
+	return id, nil
 }
 
 func (a *App) registerPage(w http.ResponseWriter, r *http.Request) {
@@ -105,96 +117,19 @@ func (a *App) noUsersYet(q interface {
 func (a *App) register(w http.ResponseWriter, r *http.Request) {
 	email := normalizeEmail(r.FormValue("email"))
 	name := strings.TrimSpace(r.FormValue("name"))
-	password := r.FormValue("password")
 	invite := strings.ToUpper(strings.TrimSpace(r.FormValue("invite")))
 
-	first := false
-	fail := func(msg string) {
+	userID, err := a.createAccount(email, name, r.FormValue("password"), invite)
+	var fe formError
+	if errors.As(err, &fe) {
+		first, _ := a.noUsersYet(a.db)
 		a.render(w, http.StatusUnprocessableEntity, "register", Page{
 			Title: "Create account",
-			Error: msg,
+			Error: fe.Error(),
 			Data:  registerForm(email, name, invite, first),
 		})
-	}
-
-	switch {
-	case !validEmail(email):
-		fail("Please enter a valid email address.")
 		return
-	case name == "" || len(name) > 50:
-		fail("Please enter your name (up to 50 characters).")
-		return
-	case len(password) < 8:
-		fail("Password must be at least 8 characters.")
-		return
-	case len(password) > 72: // bcrypt limit
-		fail("Password must be at most 72 characters.")
-		return
-	}
-
-	tx, err := a.db.Begin()
-	if err != nil {
-		a.serverError(w, err)
-		return
-	}
-	defer tx.Rollback()
-
-	if first, err = a.noUsersYet(tx); err != nil {
-		a.serverError(w, err)
-		return
-	}
-
-	// The invite is checked before anything else, so without one nobody can
-	// even find out which emails have accounts.
-	var familyID int64
-	switch {
-	case invite != "":
-		err := tx.QueryRow(`SELECT id FROM families WHERE invite_code = ?`, invite).Scan(&familyID)
-		if errors.Is(err, sql.ErrNoRows) {
-			fail("That invite code doesn't match any family.")
-			return
-		} else if err != nil {
-			a.serverError(w, err)
-			return
-		}
-	case !first:
-		fail("You need an invite code from a family member to create an account.")
-		return
-	}
-
-	var exists bool
-	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE email = ?)`, email).Scan(&exists); err != nil {
-		a.serverError(w, err)
-		return
-	}
-	if exists {
-		fail("An account with this email already exists.")
-		return
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		a.serverError(w, err)
-		return
-	}
-
-	if familyID == 0 { // first user: start a new family
-		res, err := tx.Exec(`INSERT INTO families (name, invite_code) VALUES (?, ?)`, name+"'s family", newInviteCode())
-		if err != nil {
-			a.serverError(w, err)
-			return
-		}
-		familyID, _ = res.LastInsertId()
-	}
-
-	res, err := tx.Exec(`INSERT INTO users (email, name, password_hash, family_id) VALUES (?, ?, ?, ?)`,
-		email, name, string(hash), familyID)
-	if err != nil {
-		a.serverError(w, err)
-		return
-	}
-	userID, _ := res.LastInsertId()
-	if err := tx.Commit(); err != nil {
+	} else if err != nil {
 		a.serverError(w, err)
 		return
 	}
@@ -204,6 +139,86 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/shopping", http.StatusSeeOther)
+}
+
+// formError is a problem with what the user entered, shown to them as-is.
+type formError string
+
+func (e formError) Error() string { return string(e) }
+
+// createAccount checks the details and creates the user, joining the family
+// of the invite code (or starting the first family on an empty database).
+// Mistakes in the input come back as formError.
+func (a *App) createAccount(email, name, password, invite string) (int64, error) {
+	email = normalizeEmail(email)
+	name = strings.TrimSpace(name)
+	invite = strings.ToUpper(strings.TrimSpace(invite))
+
+	switch {
+	case !validEmail(email):
+		return 0, formError("Please enter a valid email address.")
+	case name == "" || len(name) > 50:
+		return 0, formError("Please enter your name (up to 50 characters).")
+	case len(password) < 8:
+		return 0, formError("Password must be at least 8 characters.")
+	case len(password) > 72: // bcrypt limit
+		return 0, formError("Password must be at most 72 characters.")
+	}
+
+	tx, err := a.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	first, err := a.noUsersYet(tx)
+	if err != nil {
+		return 0, err
+	}
+
+	// The invite is checked before anything else, so without one nobody can
+	// even find out which emails have accounts.
+	var familyID int64
+	switch {
+	case invite != "":
+		err := tx.QueryRow(`SELECT id FROM families WHERE invite_code = ?`, invite).Scan(&familyID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, formError("That invite code doesn't match any family.")
+		} else if err != nil {
+			return 0, err
+		}
+	case !first:
+		return 0, formError("You need an invite code from a family member to create an account.")
+	}
+
+	var exists bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE email = ?)`, email).Scan(&exists); err != nil {
+		return 0, err
+	}
+	if exists {
+		return 0, formError("An account with this email already exists.")
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return 0, err
+	}
+
+	if familyID == 0 { // first user: start a new family
+		res, err := tx.Exec(`INSERT INTO families (name, invite_code) VALUES (?, ?)`, name+"'s family", newInviteCode())
+		if err != nil {
+			return 0, err
+		}
+		familyID, _ = res.LastInsertId()
+	}
+
+	res, err := tx.Exec(`INSERT INTO users (email, name, password_hash, family_id) VALUES (?, ?, ?, ?)`,
+		email, name, string(hash), familyID)
+	if err != nil {
+		return 0, err
+	}
+	userID, _ := res.LastInsertId()
+	return userID, tx.Commit()
 }
 
 func (a *App) logout(w http.ResponseWriter, r *http.Request, u *User) {
@@ -216,14 +231,8 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request, u *User) {
 
 // startSession stores a random token (hashed) and sets it as a cookie.
 func (a *App) startSession(w http.ResponseWriter, userID int64) error {
-	b := make([]byte, 32)
-	rand.Read(b)
-	token := base64.RawURLEncoding.EncodeToString(b)
-	expires := time.Now().Add(sessionTTL)
-
-	a.db.Exec(`DELETE FROM sessions WHERE expires_at <= ?`, time.Now().Unix())
-	if _, err := a.db.Exec(`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)`,
-		hashToken(token), userID, expires.Unix()); err != nil {
+	token, expires, err := a.newSession(userID, sessionTTL)
+	if err != nil {
 		return err
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -238,18 +247,38 @@ func (a *App) startSession(w http.ResponseWriter, userID int64) error {
 	return nil
 }
 
+// newSession stores a new random session token (only its hash) and returns it.
+func (a *App) newSession(userID int64, ttl time.Duration) (token string, expires time.Time, err error) {
+	b := make([]byte, 32)
+	rand.Read(b)
+	token = base64.RawURLEncoding.EncodeToString(b)
+	expires = time.Now().Add(ttl)
+
+	a.db.Exec(`DELETE FROM sessions WHERE expires_at <= ?`, time.Now().Unix())
+	if _, err := a.db.Exec(`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)`,
+		hashToken(token), userID, expires.Unix()); err != nil {
+		return "", time.Time{}, err
+	}
+	return token, expires, nil
+}
+
 // currentUser returns the logged-in user, or nil if there is no valid session.
 func (a *App) currentUser(r *http.Request) (*User, error) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
 		return nil, nil
 	}
+	return a.sessionUser(c.Value)
+}
+
+// sessionUser returns the user a session token belongs to, or nil if it is unknown or expired.
+func (a *App) sessionUser(token string) (*User, error) {
 	var u User
-	err = a.db.QueryRow(`
+	err := a.db.QueryRow(`
 		SELECT u.id, u.email, u.name, u.family_id
 		FROM sessions s JOIN users u ON u.id = s.user_id
 		WHERE s.token_hash = ? AND s.expires_at > ?`,
-		hashToken(c.Value), time.Now().Unix(),
+		hashToken(token), time.Now().Unix(),
 	).Scan(&u.ID, &u.Email, &u.Name, &u.FamilyID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

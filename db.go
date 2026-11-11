@@ -105,6 +105,14 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 	created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
+-- One row per Android app install that turned notifications on (Firebase Cloud Messaging).
+CREATE TABLE IF NOT EXISTS fcm_tokens (
+	id         INTEGER PRIMARY KEY,
+	user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	token      TEXT NOT NULL UNIQUE,
+	created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
 -- A row means that class of the Kinder Schwimmschule course is done.
 CREATE TABLE IF NOT EXISTS swim_classes (
 	family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,

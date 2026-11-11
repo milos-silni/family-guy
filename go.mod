@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	golang.org/x/crypto v0.57.0
+	golang.org/x/oauth2 v0.38.0
 	modernc.org/sqlite v1.59.0
 )
 
